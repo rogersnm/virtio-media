@@ -290,6 +290,18 @@ impl VideoDecoderStreamingState {
         }
     }
 
+    fn is_input_streaming(&mut self) -> bool {
+        matches!(
+            self,
+            Self::Running
+                | Self::Paused
+                | Self::Stopped {
+                    input_streaming: true,
+                    ..
+                }
+        )
+    }
+
     fn is_output_streaming(&mut self) -> bool {
         matches!(
             self,
@@ -373,6 +385,9 @@ pub struct VideoDecoderSession<S: VideoDecoderBackendSession> {
     /// Indices of CAPTURE buffers that are queued but not send to the backend yet because the
     /// decoder is not running.
     pending_output_buffers: Vec<u32>,
+    /// Indices of OUTPUT buffers that are queued but not decoded yet because the OUTPUT queue is
+    /// not streaming: V4L2 holds a buffer queued before `STREAMON` until it.
+    pending_input_buffers: Vec<u32>,
 
     sequence_cpt: u32,
 
@@ -468,6 +483,45 @@ impl<S: VideoDecoderBackendSession> VideoDecoderSession<S> {
         }
 
         Ok(())
+    }
+
+    /// Decodes the OUTPUT buffers queued before the OUTPUT queue was streaming, in the order they
+    /// were queued.
+    fn try_send_pending_input_buffers(&mut self) -> IoctlResult<()> {
+        if !self.state.is_input_streaming() {
+            return Ok(());
+        }
+
+        for i in std::mem::take(&mut self.pending_input_buffers) {
+            self.decode_input(i)?;
+        }
+
+        Ok(())
+    }
+
+    /// Sends a queued OUTPUT buffer to the backend.
+    fn decode_input(&mut self, index: u32) -> IoctlResult<()> {
+        let host_buffer = self
+            .input_buffers
+            .get_mut(index as usize)
+            .ok_or(libc::EINVAL)?;
+        let bytes_used = {
+            let first_plane = host_buffer.v4l2_buffer.get_first_plane();
+            // V4L2's spec mentions that if `bytes_used == 0` then the whole buffer is considered to be
+            // used.
+            if *first_plane.bytesused == 0 {
+                *first_plane.length
+            } else {
+                *first_plane.bytesused
+            }
+        };
+
+        self.backend_session.decode(
+            &host_buffer.backing,
+            host_buffer.index(),
+            host_buffer.timestamp(),
+            bytes_used,
+        )
     }
 }
 
@@ -605,6 +659,7 @@ where
             input_buffers: Default::default(),
             output_buffers: Default::default(),
             pending_output_buffers: Default::default(),
+            pending_input_buffers: Default::default(),
             sequence_cpt: 0,
             src_change_subscribed: false,
             eos_subscribed: false,
@@ -926,6 +981,11 @@ where
         }
         // TODO: fail if streaming?
 
+        // REQBUFS frees the queue's buffers, so none stays waiting to be decoded.
+        if queue.direction() == QueueDirection::Output {
+            session.pending_input_buffers.clear();
+        }
+
         let (buffers, count) = match queue {
             QueueType::VideoOutputMplane => (&mut session.input_buffers, count),
             QueueType::VideoCaptureMplane => (
@@ -1084,6 +1144,7 @@ where
             // TODO: start queueing pending buffers?
         }
 
+        session.try_send_pending_input_buffers()?;
         session.try_send_pending_output_buffers()
     }
 
@@ -1092,6 +1153,7 @@ where
             QueueDirection::Output => {
                 // TODO: something to do on the backend?
                 session.state.input_streamoff();
+                session.pending_input_buffers.clear();
 
                 &mut session.input_buffers
             }
@@ -1213,27 +1275,13 @@ where
                     *data_offset = first_plane.data_offset.copied().unwrap_or(0);
                 }
 
-                let bytes_used = {
-                    let first_plane = host_buffer.v4l2_buffer.get_first_plane();
-                    // V4L2's spec mentions that if `bytes_used == 0` then the whole buffer is considered to be
-                    // used.
-                    if *first_plane.bytesused == 0 {
-                        *first_plane.length
-                    } else {
-                        *first_plane.bytesused
-                    }
-                };
-
-                session.backend_session.decode(
-                    &host_buffer.backing,
-                    host_buffer.index(),
-                    host_buffer.timestamp(),
-                    bytes_used,
-                )?;
-
                 host_buffer.v4l2_buffer.add_flags(BufferFlags::QUEUED);
+                let res = host_buffer.v4l2_buffer.clone();
 
-                Ok(host_buffer.v4l2_buffer.clone())
+                session.pending_input_buffers.push(buffer.index());
+                session.try_send_pending_input_buffers()?;
+
+                Ok(res)
             }
             QueueDirection::Capture => {
                 // Update buffer state
