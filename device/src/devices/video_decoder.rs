@@ -974,7 +974,7 @@ where
         queue: QueueType,
         memory: MemoryType,
         count: u32,
-        flags: MemoryConsistency,
+        _flags: MemoryConsistency,
     ) -> IoctlResult<bindings::v4l2_requestbuffers> {
         if memory != MemoryType::Mmap {
             return Err(libc::EINVAL);
@@ -1060,7 +1060,9 @@ where
             capabilities: (BufferCapabilities::SUPPORTS_MMAP
                 | BufferCapabilities::SUPPORTS_ORPHANED_BUFS)
                 .bits(),
-            flags: flags.bits(),
+            // Without SUPPORTS_MMAP_CACHE_HINTS, V4L2_MEMORY_FLAG_NON_COHERENT
+            // is not honored and must not be echoed back.
+            flags: 0,
             reserved: Default::default(),
         })
     }
