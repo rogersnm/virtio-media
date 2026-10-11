@@ -85,7 +85,10 @@ impl<S: VideoDecoderBufferBacking> VideoDecoderBuffer<S> {
             panic!()
         }
 
-        v4l2_buffer.set_flags(BufferFlags::TIMESTAMP_MONOTONIC);
+        // A decoder's frames carry the timestamps their OUTPUT buffers came with, on both queues
+        // (V4L2 sets TIMESTAMP_COPY for a memory-to-memory device): clients set an OUTPUT
+        // buffer's timestamp only when its flags say so.
+        v4l2_buffer.set_flags(BufferFlags::TIMESTAMP_COPY);
         v4l2_buffer.set_field(BufferField::None);
 
         Ok(Self {
@@ -1043,7 +1046,7 @@ where
         }
         for buffer in buffers.iter_mut() {
             let v4l2_buffer = &mut buffer.v4l2_buffer;
-            v4l2_buffer.set_flags(BufferFlags::TIMESTAMP_MONOTONIC);
+            v4l2_buffer.set_flags(BufferFlags::TIMESTAMP_COPY);
             v4l2_buffer.set_timestamp(Default::default());
             v4l2_buffer.set_sequence(0);
             *v4l2_buffer.get_first_plane_mut().bytesused = 0;
