@@ -926,14 +926,27 @@ static int virtio_media_qbuf(struct file *file, void *fh, struct v4l2_buffer *b)
 	old_flags = buffer->buffer.flags;
 	buffer->buffer.flags = V4L2_BUF_FLAG_QUEUED;
 
+	/*
+	 * Count the buffer as queued before the device sees it, and under the
+	 * lock the dequeue event takes: a device that completes the buffer
+	 * right away sends that event while this thread still waits for the
+	 * command's reply, and the event's decrement would otherwise race an
+	 * unlocked increment here and be lost, until queued_bufs reaches
+	 * allocated_bufs and poll never reports the queue writable again.
+	 */
+	mutex_lock(&session->queues_lock);
+	queue->queued_bufs += 1;
+	mutex_unlock(&session->queues_lock);
+
 	ret = virtio_media_send_buffer_ioctl(vfh, VIDIOC_QBUF, b);
 	if (ret) {
 		/* Rollback the previous flags as the buffer is not queued. */
+		mutex_lock(&session->queues_lock);
+		queue->queued_bufs -= 1;
+		mutex_unlock(&session->queues_lock);
 		buffer->buffer.flags = old_flags;
 		return ret;
 	}
-
-	queue->queued_bufs += 1;
 
 	return 0;
 }
