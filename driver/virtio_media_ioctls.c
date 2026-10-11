@@ -908,6 +908,14 @@ static int virtio_media_qbuf(struct file *file, void *fh, struct v4l2_buffer *b)
 	if (b->index >= queue->allocated_bufs)
 		return -EINVAL;
 	buffer = &queue->buffers[b->index];
+
+	/*
+	 * As vb2: a buffer the device holds, or has completed for userspace to
+	 * dequeue, cannot be queued again.
+	 */
+	if (buffer->buffer.flags & (V4L2_BUF_FLAG_QUEUED | V4L2_BUF_FLAG_DONE))
+		return -EINVAL;
+
 	prepared = buffer->buffer.flags & V4L2_BUF_FLAG_PREPARED;
 
 	/*
