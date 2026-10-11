@@ -1170,8 +1170,14 @@ where
                 .size();
             sel_rect.left = std::cmp::max(0, sel_rect.left);
             sel_rect.top = std::cmp::max(0, sel_rect.top);
-            sel_rect.width = std::cmp::min(coded_size.0, sel_rect.width - sel_rect.left as u32);
-            sel_rect.height = std::cmp::min(coded_size.0, sel_rect.height - sel_rect.top as u32);
+            sel_rect.width = std::cmp::min(
+                coded_size.0,
+                sel_rect.width.saturating_sub(sel_rect.left as u32),
+            );
+            sel_rect.height = std::cmp::min(
+                coded_size.1,
+                sel_rect.height.saturating_sub(sel_rect.top as u32),
+            );
 
             *rect = sel_rect.into();
         }
