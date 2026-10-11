@@ -393,6 +393,9 @@ pub struct VideoDecoderSession<S: VideoDecoderBackendSession> {
     pending_input_buffers: Vec<u32>,
 
     sequence_cpt: u32,
+    /// The next OUTPUT buffer's sequence number: V4L2 numbers each queue's buffers in the order
+    /// it returns them, from 0 at each STREAMON.
+    input_sequence: u32,
 
     /// Whether the input source change event has been subscribed to by the driver. If `true` then
     /// the device will emit resolution change events.
@@ -664,6 +667,7 @@ where
             pending_output_buffers: Default::default(),
             pending_input_buffers: Default::default(),
             sequence_cpt: 0,
+            input_sequence: 0,
             src_change_subscribed: false,
             eos_subscribed: false,
             crop_rectangle: CropRectangle::Settable(v4l2r::Rect::new(0, 0, 0, 0)),
@@ -762,6 +766,8 @@ where
                     };
 
                     buffer.v4l2_buffer.clear_flags(BufferFlags::QUEUED);
+                    buffer.v4l2_buffer.set_sequence(session.input_sequence);
+                    session.input_sequence += 1;
 
                     if error != 0 {
                         buffer.v4l2_buffer.set_flags(BufferFlags::ERROR);
@@ -1145,8 +1151,18 @@ where
         }
 
         match queue.direction() {
-            QueueDirection::Output => session.state.input_streamon(),
-            QueueDirection::Capture => session.state.output_streamon(),
+            QueueDirection::Output => {
+                if !session.state.is_input_streaming() {
+                    session.input_sequence = 0;
+                }
+                session.state.input_streamon()
+            }
+            QueueDirection::Capture => {
+                if !session.state.is_output_streaming() {
+                    session.sequence_cpt = 0;
+                }
+                session.state.output_streamon()
+            }
         }
 
         session
