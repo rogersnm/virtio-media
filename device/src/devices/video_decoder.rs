@@ -981,9 +981,10 @@ where
         }
         // TODO: fail if streaming?
 
-        // REQBUFS frees the queue's buffers, so none stays waiting to be decoded.
-        if queue.direction() == QueueDirection::Output {
-            session.pending_input_buffers.clear();
+        // REQBUFS frees the queue's buffers: whatever it keeps comes back unqueued, and none waits.
+        match queue.direction() {
+            QueueDirection::Output => session.pending_input_buffers.clear(),
+            QueueDirection::Capture => session.pending_output_buffers.clear(),
         }
 
         let (buffers, count) = match queue {
@@ -1039,6 +1040,13 @@ where
                 })
                 .collect::<IoctlResult<Vec<_>>>()?;
             buffers.extend(new_buffers);
+        }
+        for buffer in buffers.iter_mut() {
+            let v4l2_buffer = &mut buffer.v4l2_buffer;
+            v4l2_buffer.set_flags(BufferFlags::TIMESTAMP_MONOTONIC);
+            v4l2_buffer.set_timestamp(Default::default());
+            v4l2_buffer.set_sequence(0);
+            *v4l2_buffer.get_first_plane_mut().bytesused = 0;
         }
 
         session
