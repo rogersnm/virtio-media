@@ -1203,9 +1203,11 @@ where
                 v4l2_buffer.set_field(BufferField::None);
                 v4l2_buffer.set_timestamp(buffer.timestamp());
                 let first_plane = buffer.get_first_plane();
-                *v4l2_buffer.get_first_plane_mut().bytesused = *first_plane.bytesused;
                 let host_first_plane = v4l2_buffer.get_first_plane_mut();
-                *host_first_plane.length = *first_plane.length;
+                // The plane's length is the one allocated, not the guest's.
+                if *first_plane.bytesused > *host_first_plane.length {
+                    return Err(libc::EINVAL);
+                }
                 *host_first_plane.bytesused = *first_plane.bytesused;
                 if let Some(data_offset) = host_first_plane.data_offset {
                     *data_offset = first_plane.data_offset.copied().unwrap_or(0);
@@ -1240,7 +1242,6 @@ where
                 v4l2_buffer.clear_flags(BufferFlags::LAST);
                 let host_first_plane = v4l2_buffer.get_first_plane_mut();
                 let first_plane = buffer.get_first_plane();
-                *host_first_plane.length = *first_plane.length;
                 *host_first_plane.bytesused = *first_plane.bytesused;
                 if let Some(data_offset) = host_first_plane.data_offset {
                     *data_offset = first_plane.data_offset.copied().unwrap_or(0);
