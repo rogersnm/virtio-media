@@ -462,7 +462,10 @@ impl<S: VideoDecoderBackendSession> VideoDecoderSession<S> {
         }
 
         for i in self.pending_output_buffers.drain(..) {
-            let buffer = self.output_buffers.get_mut(i as usize).unwrap();
+            // A REQBUFS that shrank the queue since took the buffer with it.
+            let Some(buffer) = self.output_buffers.get_mut(i as usize) else {
+                continue;
+            };
             self.backend_session
                 .use_as_output(buffer.index(), &mut buffer.backing)?;
         }
