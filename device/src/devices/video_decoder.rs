@@ -802,7 +802,11 @@ where
                             )))
                     }
 
-                    session.format_change_pending = true;
+                    // Only a change while CAPTURE streams ends with a LAST buffer (dev-decoder,
+                    // "Dynamic Resolution Change"); the initial one, before CAPTURE is set up, has
+                    // none ("Initialization"), and waiting for one would take the drain's LAST
+                    // for it and swallow the EOS event.
+                    session.format_change_pending = session.state.is_output_streaming();
                 }
                 VideoDecoderBackendEvent::FrameCompleted {
                     buffer_id,
