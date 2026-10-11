@@ -739,6 +739,7 @@ static int virtio_media_reqbufs(struct file *file, void *fh,
 {
 	struct v4l2_fh *vfh = file_to_v4l2_fh(file);
 	struct virtio_media_session *session = fh_to_session(vfh);
+	struct virtio_media_buffer *buffers = NULL, *old_buffers;
 	struct virtio_media_queue_state *queue;
 	int ret;
 
@@ -759,17 +760,19 @@ static int virtio_media_reqbufs(struct file *file, void *fh,
 	if (b->count == 0)
 		virtio_media_clear_queue(session, queue);
 
-	vfree(queue->buffers);
-	queue->buffers = NULL;
-
 	if (b->count > 0) {
-		queue->buffers =
-			vzalloc(sizeof(struct virtio_media_buffer) * b->count);
-		if (!queue->buffers)
+		buffers = vzalloc(sizeof(*buffers) * b->count);
+		if (!buffers)
 			return -ENOMEM;
 	}
 
+	/* The event worker reads both under queues_lock. */
+	mutex_lock(&session->queues_lock);
+	old_buffers = queue->buffers;
+	queue->buffers = buffers;
 	queue->allocated_bufs = b->count;
+	mutex_unlock(&session->queues_lock);
+	vfree(old_buffers);
 
 	/*
 	 * If a multiplanar queue is successfully used here, this means
